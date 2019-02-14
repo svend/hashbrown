@@ -152,7 +152,7 @@ pub use fx::FxHashBuilder as DefaultHashBuilder;
 /// }
 ///
 /// impl Viking {
-///     /// Create a new Viking.
+///     /// Creates a new Viking.
 ///     fn new(name: &str, country: &str) -> Viking {
 ///         Viking { name: name.to_string(), country: country.to_string() }
 ///     }
@@ -188,12 +188,12 @@ pub use fx::FxHashBuilder as DefaultHashBuilder;
 
 #[derive(Clone)]
 pub struct HashMap<K, V, S = DefaultHashBuilder> {
-    hash_builder: S,
+    pub(crate) hash_builder: S,
     pub(crate) table: RawTable<(K, V)>,
 }
 
 #[inline]
-fn make_hash<K: Hash + ?Sized>(hash_builder: &impl BuildHasher, val: &K) -> u64 {
+pub(crate) fn make_hash<K: Hash + ?Sized>(hash_builder: &impl BuildHasher, val: &K) -> u64 {
     let mut state = hash_builder.build_hasher();
     val.hash(&mut state);
     state.finish()
@@ -233,87 +233,7 @@ impl<K: Hash + Eq, V> HashMap<K, V, DefaultHashBuilder> {
     }
 }
 
-impl<K, V, S> HashMap<K, V, S>
-where
-    K: Eq + Hash,
-    S: BuildHasher,
-{
-    /// Creates an empty `HashMap` which will use the given hash builder to hash
-    /// keys.
-    ///
-    /// The created map has the default initial capacity.
-    ///
-    /// Warning: `hash_builder` is normally randomly generated, and
-    /// is designed to allow HashMaps to be resistant to attacks that
-    /// cause many collisions and very poor performance. Setting it
-    /// manually using this function can expose a DoS attack vector.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use hashbrown::HashMap;
-    /// use hashbrown::hash_map::DefaultHashBuilder;
-    ///
-    /// let s = DefaultHashBuilder::default();
-    /// let mut map = HashMap::with_hasher(s);
-    /// map.insert(1, 2);
-    /// ```
-    #[inline]
-    pub fn with_hasher(hash_builder: S) -> HashMap<K, V, S> {
-        HashMap {
-            hash_builder,
-            table: RawTable::new(),
-        }
-    }
-
-    /// Creates an empty `HashMap` with the specified capacity, using `hash_builder`
-    /// to hash the keys.
-    ///
-    /// The hash map will be able to hold at least `capacity` elements without
-    /// reallocating. If `capacity` is 0, the hash map will not allocate.
-    ///
-    /// Warning: `hash_builder` is normally randomly generated, and
-    /// is designed to allow HashMaps to be resistant to attacks that
-    /// cause many collisions and very poor performance. Setting it
-    /// manually using this function can expose a DoS attack vector.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use hashbrown::HashMap;
-    /// use hashbrown::hash_map::DefaultHashBuilder;
-    ///
-    /// let s = DefaultHashBuilder::default();
-    /// let mut map = HashMap::with_capacity_and_hasher(10, s);
-    /// map.insert(1, 2);
-    /// ```
-    #[inline]
-    pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> HashMap<K, V, S> {
-        HashMap {
-            hash_builder,
-            table: RawTable::with_capacity(capacity),
-        }
-    }
-
-    /// Returns a reference to the map's [`BuildHasher`].
-    ///
-    /// [`BuildHasher`]: https://doc.rust-lang.org/std/hash/trait.BuildHasher.html
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use hashbrown::HashMap;
-    /// use hashbrown::hash_map::DefaultHashBuilder;
-    ///
-    /// let hasher = DefaultHashBuilder::default();
-    /// let map: HashMap<i32, i32> = HashMap::with_hasher(hasher);
-    /// let hasher: &DefaultHashBuilder = map.hasher();
-    /// ```
-    #[inline]
-    pub fn hasher(&self) -> &S {
-        &self.hash_builder
-    }
-
+impl<K, V, S> HashMap<K, V, S> {
     /// Returns the number of elements the map can hold without reallocating.
     ///
     /// This number is a lower bound; the `HashMap<K, V>` might be able to hold
@@ -329,108 +249,6 @@ where
     #[inline]
     pub fn capacity(&self) -> usize {
         self.table.capacity()
-    }
-
-    /// Reserves capacity for at least `additional` more elements to be inserted
-    /// in the `HashMap`. The collection may reserve more space to avoid
-    /// frequent reallocations.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the new allocation size overflows [`usize`].
-    ///
-    /// [`usize`]: https://doc.rust-lang.org/std/primitive.usize.html
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use hashbrown::HashMap;
-    /// let mut map: HashMap<&str, i32> = HashMap::new();
-    /// map.reserve(10);
-    /// ```
-    #[inline]
-    pub fn reserve(&mut self, additional: usize) {
-        let hash_builder = &self.hash_builder;
-        self.table
-            .reserve(additional, |x| make_hash(hash_builder, &x.0));
-    }
-
-    /// Tries to reserve capacity for at least `additional` more elements to be inserted
-    /// in the given `HashMap<K,V>`. The collection may reserve more space to avoid
-    /// frequent reallocations.
-    ///
-    /// # Errors
-    ///
-    /// If the capacity overflows, or the allocator reports a failure, then an error
-    /// is returned.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use hashbrown::HashMap;
-    /// let mut map: HashMap<&str, isize> = HashMap::new();
-    /// map.try_reserve(10).expect("why is the test harness OOMing on 10 bytes?");
-    /// ```
-    #[inline]
-    pub fn try_reserve(&mut self, additional: usize) -> Result<(), CollectionAllocErr> {
-        let hash_builder = &self.hash_builder;
-        self.table
-            .try_reserve(additional, |x| make_hash(hash_builder, &x.0))
-    }
-
-    /// Shrinks the capacity of the map as much as possible. It will drop
-    /// down as much as possible while maintaining the internal rules
-    /// and possibly leaving some space in accordance with the resize policy.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use hashbrown::HashMap;
-    ///
-    /// let mut map: HashMap<i32, i32> = HashMap::with_capacity(100);
-    /// map.insert(1, 2);
-    /// map.insert(3, 4);
-    /// assert!(map.capacity() >= 100);
-    /// map.shrink_to_fit();
-    /// assert!(map.capacity() >= 2);
-    /// ```
-    #[inline]
-    pub fn shrink_to_fit(&mut self) {
-        let hash_builder = &self.hash_builder;
-        self.table.shrink_to(0, |x| make_hash(hash_builder, &x.0));
-    }
-
-    /// Shrinks the capacity of the map with a lower limit. It will drop
-    /// down no lower than the supplied limit while maintaining the internal rules
-    /// and possibly leaving some space in accordance with the resize policy.
-    ///
-    /// Panics if the current capacity is smaller than the supplied
-    /// minimum capacity.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use hashbrown::HashMap;
-    ///
-    /// let mut map: HashMap<i32, i32> = HashMap::with_capacity(100);
-    /// map.insert(1, 2);
-    /// map.insert(3, 4);
-    /// assert!(map.capacity() >= 100);
-    /// map.shrink_to(10);
-    /// assert!(map.capacity() >= 10);
-    /// map.shrink_to(0);
-    /// assert!(map.capacity() >= 2);
-    /// ```
-    #[inline]
-    pub fn shrink_to(&mut self, min_capacity: usize) {
-        assert!(
-            self.capacity() >= min_capacity,
-            "Tried to shrink to a larger capacity"
-        );
-
-        let hash_builder = &self.hash_builder;
-        self.table
-            .shrink_to(min_capacity, |x| make_hash(hash_builder, &x.0));
     }
 
     /// An iterator visiting all keys in arbitrary order.
@@ -568,43 +386,6 @@ where
         }
     }
 
-    /// Gets the given key's corresponding entry in the map for in-place manipulation.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use hashbrown::HashMap;
-    ///
-    /// let mut letters = HashMap::new();
-    ///
-    /// for ch in "a short treatise on fungi".chars() {
-    ///     let counter = letters.entry(ch).or_insert(0);
-    ///     *counter += 1;
-    /// }
-    ///
-    /// assert_eq!(letters[&'s'], 2);
-    /// assert_eq!(letters[&'t'], 3);
-    /// assert_eq!(letters[&'u'], 1);
-    /// assert_eq!(letters.get(&'y'), None);
-    /// ```
-    #[inline]
-    pub fn entry(&mut self, key: K) -> Entry<K, V, S> {
-        let hash = make_hash(&self.hash_builder, &key);
-        if let Some(elem) = self.table.find(hash, |q| q.0.eq(&key)) {
-            Entry::Occupied(OccupiedEntry {
-                key: Some(key),
-                elem,
-                table: self,
-            })
-        } else {
-            Entry::Vacant(VacantEntry {
-                hash,
-                key,
-                table: self,
-            })
-        }
-    }
-
     #[cfg(test)]
     #[inline]
     fn raw_capacity(&self) -> usize {
@@ -628,7 +409,7 @@ where
         self.table.len()
     }
 
-    /// Returns true if the map contains no elements.
+    /// Returns `true` if the map contains no elements.
     ///
     /// # Examples
     ///
@@ -690,6 +471,227 @@ where
     #[inline]
     pub fn clear(&mut self) {
         self.table.clear();
+    }
+}
+
+impl<K, V, S> HashMap<K, V, S>
+where
+    K: Eq + Hash,
+    S: BuildHasher,
+{
+    /// Creates an empty `HashMap` which will use the given hash builder to hash
+    /// keys.
+    ///
+    /// The created map has the default initial capacity.
+    ///
+    /// Warning: `hash_builder` is normally randomly generated, and
+    /// is designed to allow HashMaps to be resistant to attacks that
+    /// cause many collisions and very poor performance. Setting it
+    /// manually using this function can expose a DoS attack vector.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use hashbrown::HashMap;
+    /// use hashbrown::hash_map::DefaultHashBuilder;
+    ///
+    /// let s = DefaultHashBuilder::default();
+    /// let mut map = HashMap::with_hasher(s);
+    /// map.insert(1, 2);
+    /// ```
+    #[inline]
+    pub fn with_hasher(hash_builder: S) -> HashMap<K, V, S> {
+        HashMap {
+            hash_builder,
+            table: RawTable::new(),
+        }
+    }
+
+    /// Creates an empty `HashMap` with the specified capacity, using `hash_builder`
+    /// to hash the keys.
+    ///
+    /// The hash map will be able to hold at least `capacity` elements without
+    /// reallocating. If `capacity` is 0, the hash map will not allocate.
+    ///
+    /// Warning: `hash_builder` is normally randomly generated, and
+    /// is designed to allow HashMaps to be resistant to attacks that
+    /// cause many collisions and very poor performance. Setting it
+    /// manually using this function can expose a DoS attack vector.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use hashbrown::HashMap;
+    /// use hashbrown::hash_map::DefaultHashBuilder;
+    ///
+    /// let s = DefaultHashBuilder::default();
+    /// let mut map = HashMap::with_capacity_and_hasher(10, s);
+    /// map.insert(1, 2);
+    /// ```
+    #[inline]
+    pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> HashMap<K, V, S> {
+        HashMap {
+            hash_builder,
+            table: RawTable::with_capacity(capacity),
+        }
+    }
+
+    /// Returns a reference to the map's [`BuildHasher`].
+    ///
+    /// [`BuildHasher`]: https://doc.rust-lang.org/std/hash/trait.BuildHasher.html
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use hashbrown::HashMap;
+    /// use hashbrown::hash_map::DefaultHashBuilder;
+    ///
+    /// let hasher = DefaultHashBuilder::default();
+    /// let map: HashMap<i32, i32> = HashMap::with_hasher(hasher);
+    /// let hasher: &DefaultHashBuilder = map.hasher();
+    /// ```
+    #[inline]
+    pub fn hasher(&self) -> &S {
+        &self.hash_builder
+    }
+
+    /// Reserves capacity for at least `additional` more elements to be inserted
+    /// in the `HashMap`. The collection may reserve more space to avoid
+    /// frequent reallocations.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the new allocation size overflows [`usize`].
+    ///
+    /// [`usize`]: https://doc.rust-lang.org/std/primitive.usize.html
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use hashbrown::HashMap;
+    /// let mut map: HashMap<&str, i32> = HashMap::new();
+    /// map.reserve(10);
+    /// ```
+    #[inline]
+    pub fn reserve(&mut self, additional: usize) {
+        let hash_builder = &self.hash_builder;
+        self.table
+            .reserve(additional, |x| make_hash(hash_builder, &x.0));
+    }
+
+    /// Tries to reserve capacity for at least `additional` more elements to be inserted
+    /// in the given `HashMap<K,V>`. The collection may reserve more space to avoid
+    /// frequent reallocations.
+    ///
+    /// # Errors
+    ///
+    /// If the capacity overflows, or the allocator reports a failure, then an error
+    /// is returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use hashbrown::HashMap;
+    /// let mut map: HashMap<&str, isize> = HashMap::new();
+    /// map.try_reserve(10).expect("why is the test harness OOMing on 10 bytes?");
+    /// ```
+    #[inline]
+    pub fn try_reserve(&mut self, additional: usize) -> Result<(), CollectionAllocErr> {
+        let hash_builder = &self.hash_builder;
+        self.table
+            .try_reserve(additional, |x| make_hash(hash_builder, &x.0))
+    }
+
+    /// Shrinks the capacity of the map as much as possible. It will drop
+    /// down as much as possible while maintaining the internal rules
+    /// and possibly leaving some space in accordance with the resize policy.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use hashbrown::HashMap;
+    ///
+    /// let mut map: HashMap<i32, i32> = HashMap::with_capacity(100);
+    /// map.insert(1, 2);
+    /// map.insert(3, 4);
+    /// assert!(map.capacity() >= 100);
+    /// map.shrink_to_fit();
+    /// assert!(map.capacity() >= 2);
+    /// ```
+    #[inline]
+    pub fn shrink_to_fit(&mut self) {
+        let hash_builder = &self.hash_builder;
+        self.table.shrink_to(0, |x| make_hash(hash_builder, &x.0));
+    }
+
+    /// Shrinks the capacity of the map with a lower limit. It will drop
+    /// down no lower than the supplied limit while maintaining the internal rules
+    /// and possibly leaving some space in accordance with the resize policy.
+    ///
+    /// Panics if the current capacity is smaller than the supplied
+    /// minimum capacity.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use hashbrown::HashMap;
+    ///
+    /// let mut map: HashMap<i32, i32> = HashMap::with_capacity(100);
+    /// map.insert(1, 2);
+    /// map.insert(3, 4);
+    /// assert!(map.capacity() >= 100);
+    /// map.shrink_to(10);
+    /// assert!(map.capacity() >= 10);
+    /// map.shrink_to(0);
+    /// assert!(map.capacity() >= 2);
+    /// ```
+    #[inline]
+    pub fn shrink_to(&mut self, min_capacity: usize) {
+        assert!(
+            self.capacity() >= min_capacity,
+            "Tried to shrink to a larger capacity"
+        );
+
+        let hash_builder = &self.hash_builder;
+        self.table
+            .shrink_to(min_capacity, |x| make_hash(hash_builder, &x.0));
+    }
+
+    /// Gets the given key's corresponding entry in the map for in-place manipulation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use hashbrown::HashMap;
+    ///
+    /// let mut letters = HashMap::new();
+    ///
+    /// for ch in "a short treatise on fungi".chars() {
+    ///     let counter = letters.entry(ch).or_insert(0);
+    ///     *counter += 1;
+    /// }
+    ///
+    /// assert_eq!(letters[&'s'], 2);
+    /// assert_eq!(letters[&'t'], 3);
+    /// assert_eq!(letters[&'u'], 1);
+    /// assert_eq!(letters.get(&'y'), None);
+    /// ```
+    #[inline]
+    pub fn entry(&mut self, key: K) -> Entry<K, V, S> {
+        let hash = make_hash(&self.hash_builder, &key);
+        if let Some(elem) = self.table.find(hash, |q| q.0.eq(&key)) {
+            Entry::Occupied(OccupiedEntry {
+                key: Some(key),
+                elem,
+                table: self,
+            })
+        } else {
+            Entry::Vacant(VacantEntry {
+                hash,
+                key,
+                table: self,
+            })
+        }
     }
 
     /// Returns a reference to the value corresponding to the key.
@@ -754,7 +756,7 @@ where
             })
     }
 
-    /// Returns true if the map contains a value for the specified key.
+    /// Returns `true` if the map contains a value for the specified key.
     ///
     /// The key may be any borrowed form of the map's key type, but
     /// [`Hash`] and [`Eq`] on the borrowed form *must* match those for
@@ -956,7 +958,6 @@ where
 
 impl<K, V, S> HashMap<K, V, S>
 where
-    K: Eq + Hash,
     S: BuildHasher,
 {
     /// Creates a raw entry builder for the HashMap.
@@ -992,7 +993,6 @@ where
     /// are free to assume this doesn't happen (within the limits of memory-safety).
     #[inline]
     pub fn raw_entry_mut(&mut self) -> RawEntryBuilderMut<K, V, S> {
-        self.reserve(1);
         RawEntryBuilderMut { map: self }
     }
 
@@ -1220,7 +1220,7 @@ impl<'a, K, V: Debug> fmt::Debug for Values<'a, K, V> {
 /// [`drain`]: struct.HashMap.html#method.drain
 /// [`HashMap`]: struct.HashMap.html
 pub struct Drain<'a, K: 'a, V: 'a> {
-    pub(super) inner: RawDrain<'a, (K, V)>,
+    inner: RawDrain<'a, (K, V)>,
 }
 
 impl<'a, K, V> Drain<'a, K, V> {
@@ -1300,9 +1300,8 @@ pub struct RawEntryBuilder<'a, K: 'a, V: 'a, S: 'a> {
 impl<'a, K, V, S> RawEntryBuilderMut<'a, K, V, S>
 where
     S: BuildHasher,
-    K: Eq + Hash,
 {
-    /// Create a `RawEntryMut` from the given key.
+    /// Creates a `RawEntryMut` from the given key.
     #[inline]
     pub fn from_key<Q: ?Sized>(self, k: &Q) -> RawEntryMut<'a, K, V, S>
     where
@@ -1314,7 +1313,7 @@ where
         self.from_key_hashed_nocheck(hasher.finish(), k)
     }
 
-    /// Create a `RawEntryMut` from the given key and its hash.
+    /// Creates a `RawEntryMut` from the given key and its hash.
     #[inline]
     pub fn from_key_hashed_nocheck<Q: ?Sized>(self, hash: u64, k: &Q) -> RawEntryMut<'a, K, V, S>
     where
@@ -1341,7 +1340,7 @@ where
         }
     }
 
-    /// Create a `RawEntryMut` from the given hash.
+    /// Creates a `RawEntryMut` from the given hash.
     #[inline]
     pub fn from_hash<F>(self, hash: u64, is_match: F) -> RawEntryMut<'a, K, V, S>
     where
@@ -1680,7 +1679,7 @@ pub enum Entry<'a, K: 'a, V: 'a, S: 'a> {
     Vacant(VacantEntry<'a, K, V, S>),
 }
 
-impl<'a, K: 'a + Debug + Eq + Hash, V: 'a + Debug, S: 'a> Debug for Entry<'a, K, V, S> {
+impl<'a, K: 'a + Debug, V: 'a + Debug, S: 'a> Debug for Entry<'a, K, V, S> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Vacant(ref v) => f.debug_tuple("Entry").field(v).finish(),
@@ -1733,17 +1732,13 @@ pub struct VacantEntry<'a, K: 'a, V: 'a, S: 'a> {
     table: &'a mut HashMap<K, V, S>,
 }
 
-impl<'a, K: 'a + Debug + Eq + Hash, V: 'a, S> Debug for VacantEntry<'a, K, V, S> {
+impl<'a, K: 'a + Debug, V: 'a, S> Debug for VacantEntry<'a, K, V, S> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_tuple("VacantEntry").field(self.key()).finish()
     }
 }
 
-impl<'a, K, V, S> IntoIterator for &'a HashMap<K, V, S>
-where
-    K: Eq + Hash,
-    S: BuildHasher,
-{
+impl<'a, K, V, S> IntoIterator for &'a HashMap<K, V, S> {
     type Item = (&'a K, &'a V);
     type IntoIter = Iter<'a, K, V>;
 
@@ -1753,11 +1748,7 @@ where
     }
 }
 
-impl<'a, K, V, S> IntoIterator for &'a mut HashMap<K, V, S>
-where
-    K: Eq + Hash,
-    S: BuildHasher,
-{
+impl<'a, K, V, S> IntoIterator for &'a mut HashMap<K, V, S> {
     type Item = (&'a K, &'a mut V);
     type IntoIter = IterMut<'a, K, V>;
 
@@ -1767,11 +1758,7 @@ where
     }
 }
 
-impl<K, V, S> IntoIterator for HashMap<K, V, S>
-where
-    K: Eq + Hash,
-    S: BuildHasher,
-{
+impl<K, V, S> IntoIterator for HashMap<K, V, S> {
     type Item = (K, V);
     type IntoIter = IntoIter<K, V>;
 
