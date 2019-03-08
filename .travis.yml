@@ -12,7 +12,7 @@ matrix:
       script:
         - cargo clean
         - cargo +nightly miri test
-    - rust: 1.29.0
+    - rust: 1.31.0
     - rust: stable
     - rust: beta
     - rust: nightly

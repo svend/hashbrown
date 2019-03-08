@@ -1,5 +1,7 @@
 use self::Entry::*;
 
+use crate::raw::{Bucket, RawDrain, RawIntoIter, RawIter, RawTable};
+use crate::CollectionAllocErr;
 use core::borrow::Borrow;
 use core::fmt::{self, Debug};
 use core::hash::{BuildHasher, Hash, Hasher};
@@ -7,10 +9,8 @@ use core::iter::{FromIterator, FusedIterator};
 use core::marker::PhantomData;
 use core::mem;
 use core::ops::Index;
-use raw::{Bucket, RawDrain, RawIntoIter, RawIter, RawTable};
-use CollectionAllocErr;
 
-pub use fx::FxHashBuilder as DefaultHashBuilder;
+pub use crate::fx::FxHashBuilder as DefaultHashBuilder;
 
 /// A hash map implemented with quadratic probing and SIMD lookup.
 ///
@@ -269,7 +269,7 @@ impl<K, V, S> HashMap<K, V, S> {
     /// }
     /// ```
     #[inline]
-    pub fn keys(&self) -> Keys<K, V> {
+    pub fn keys(&self) -> Keys<'_, K, V> {
         Keys { inner: self.iter() }
     }
 
@@ -291,7 +291,7 @@ impl<K, V, S> HashMap<K, V, S> {
     /// }
     /// ```
     #[inline]
-    pub fn values(&self) -> Values<K, V> {
+    pub fn values(&self) -> Values<'_, K, V> {
         Values { inner: self.iter() }
     }
 
@@ -318,7 +318,7 @@ impl<K, V, S> HashMap<K, V, S> {
     /// }
     /// ```
     #[inline]
-    pub fn values_mut(&mut self) -> ValuesMut<K, V> {
+    pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
         ValuesMut {
             inner: self.iter_mut(),
         }
@@ -342,7 +342,7 @@ impl<K, V, S> HashMap<K, V, S> {
     /// }
     /// ```
     #[inline]
-    pub fn iter(&self) -> Iter<K, V> {
+    pub fn iter(&self) -> Iter<'_, K, V> {
         // Here we tie the lifetime of self to the iter.
         unsafe {
             Iter {
@@ -376,7 +376,7 @@ impl<K, V, S> HashMap<K, V, S> {
     /// }
     /// ```
     #[inline]
-    pub fn iter_mut(&mut self) -> IterMut<K, V> {
+    pub fn iter_mut(&mut self) -> IterMut<'_, K, V> {
         // Here we tie the lifetime of self to the iter.
         unsafe {
             IterMut {
@@ -446,7 +446,7 @@ impl<K, V, S> HashMap<K, V, S> {
     /// assert!(a.is_empty());
     /// ```
     #[inline]
-    pub fn drain(&mut self) -> Drain<K, V> {
+    pub fn drain(&mut self) -> Drain<'_, K, V> {
         // Here we tie the lifetime of self to the iter.
         unsafe {
             Drain {
@@ -677,7 +677,7 @@ where
     /// assert_eq!(letters.get(&'y'), None);
     /// ```
     #[inline]
-    pub fn entry(&mut self, key: K) -> Entry<K, V, S> {
+    pub fn entry(&mut self, key: K) -> Entry<'_, K, V, S> {
         let hash = make_hash(&self.hash_builder, &key);
         if let Some(elem) = self.table.find(hash, |q| q.0.eq(&key)) {
             Entry::Occupied(OccupiedEntry {
@@ -992,7 +992,7 @@ where
     /// acting erratically, with two keys randomly masking each other. Implementations
     /// are free to assume this doesn't happen (within the limits of memory-safety).
     #[inline]
-    pub fn raw_entry_mut(&mut self) -> RawEntryBuilderMut<K, V, S> {
+    pub fn raw_entry_mut(&mut self) -> RawEntryBuilderMut<'_, K, V, S> {
         RawEntryBuilderMut { map: self }
     }
 
@@ -1012,7 +1012,7 @@ where
     ///
     /// Immutable raw entries have very limited use; you might instead want `raw_entry_mut`.
     #[inline]
-    pub fn raw_entry(&self) -> RawEntryBuilder<K, V, S> {
+    pub fn raw_entry(&self) -> RawEntryBuilder<'_, K, V, S> {
         RawEntryBuilder { map: self }
     }
 }
@@ -1047,7 +1047,7 @@ where
     V: Debug,
     S: BuildHasher,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_map().entries(self.iter()).finish()
     }
 }
@@ -1064,7 +1064,7 @@ where
     }
 }
 
-impl<'a, K, Q: ?Sized, V, S> Index<&'a Q> for HashMap<K, V, S>
+impl<K, Q: ?Sized, V, S> Index<&Q> for HashMap<K, V, S>
 where
     K: Eq + Hash + Borrow<Q>,
     Q: Eq + Hash,
@@ -1090,15 +1090,15 @@ where
 ///
 /// [`iter`]: struct.HashMap.html#method.iter
 /// [`HashMap`]: struct.HashMap.html
-pub struct Iter<'a, K: 'a, V: 'a> {
+pub struct Iter<'a, K, V> {
     inner: RawIter<(K, V)>,
     _marker: PhantomData<(&'a K, &'a V)>,
 }
 
 // FIXME(#26925) Remove in favor of `#[derive(Clone)]`
-impl<'a, K, V> Clone for Iter<'a, K, V> {
+impl<K, V> Clone for Iter<'_, K, V> {
     #[inline]
-    fn clone(&self) -> Iter<'a, K, V> {
+    fn clone(&self) -> Self {
         Iter {
             inner: self.inner.clone(),
             _marker: PhantomData,
@@ -1106,8 +1106,8 @@ impl<'a, K, V> Clone for Iter<'a, K, V> {
     }
 }
 
-impl<'a, K: Debug, V: Debug> fmt::Debug for Iter<'a, K, V> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl<K: Debug, V: Debug> fmt::Debug for Iter<'_, K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_list().entries(self.clone()).finish()
     }
 }
@@ -1119,16 +1119,16 @@ impl<'a, K: Debug, V: Debug> fmt::Debug for Iter<'a, K, V> {
 ///
 /// [`iter_mut`]: struct.HashMap.html#method.iter_mut
 /// [`HashMap`]: struct.HashMap.html
-pub struct IterMut<'a, K: 'a, V: 'a> {
+pub struct IterMut<'a, K, V> {
     inner: RawIter<(K, V)>,
     // To ensure invariance with respect to V
     _marker: PhantomData<(&'a K, &'a mut V)>,
 }
 
-impl<'a, K, V> IterMut<'a, K, V> {
+impl<K, V> IterMut<'_, K, V> {
     /// Returns a iterator of references over the remaining items.
     #[inline]
-    pub(super) fn iter(&self) -> Iter<K, V> {
+    pub(super) fn iter(&self) -> Iter<'_, K, V> {
         Iter {
             inner: self.inner.clone(),
             _marker: PhantomData,
@@ -1150,7 +1150,7 @@ pub struct IntoIter<K, V> {
 impl<K, V> IntoIter<K, V> {
     /// Returns a iterator of references over the remaining items.
     #[inline]
-    pub(super) fn iter(&self) -> Iter<K, V> {
+    pub(super) fn iter(&self) -> Iter<'_, K, V> {
         Iter {
             inner: self.inner.iter(),
             _marker: PhantomData,
@@ -1165,22 +1165,22 @@ impl<K, V> IntoIter<K, V> {
 ///
 /// [`keys`]: struct.HashMap.html#method.keys
 /// [`HashMap`]: struct.HashMap.html
-pub struct Keys<'a, K: 'a, V: 'a> {
+pub struct Keys<'a, K, V> {
     inner: Iter<'a, K, V>,
 }
 
 // FIXME(#26925) Remove in favor of `#[derive(Clone)]`
-impl<'a, K, V> Clone for Keys<'a, K, V> {
+impl<K, V> Clone for Keys<'_, K, V> {
     #[inline]
-    fn clone(&self) -> Keys<'a, K, V> {
+    fn clone(&self) -> Self {
         Keys {
             inner: self.inner.clone(),
         }
     }
 }
 
-impl<'a, K: Debug, V> fmt::Debug for Keys<'a, K, V> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl<K: Debug, V> fmt::Debug for Keys<'_, K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_list().entries(self.clone()).finish()
     }
 }
@@ -1192,22 +1192,22 @@ impl<'a, K: Debug, V> fmt::Debug for Keys<'a, K, V> {
 ///
 /// [`values`]: struct.HashMap.html#method.values
 /// [`HashMap`]: struct.HashMap.html
-pub struct Values<'a, K: 'a, V: 'a> {
+pub struct Values<'a, K, V> {
     inner: Iter<'a, K, V>,
 }
 
 // FIXME(#26925) Remove in favor of `#[derive(Clone)]`
-impl<'a, K, V> Clone for Values<'a, K, V> {
+impl<K, V> Clone for Values<'_, K, V> {
     #[inline]
-    fn clone(&self) -> Values<'a, K, V> {
+    fn clone(&self) -> Self {
         Values {
             inner: self.inner.clone(),
         }
     }
 }
 
-impl<'a, K, V: Debug> fmt::Debug for Values<'a, K, V> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl<K, V: Debug> fmt::Debug for Values<'_, K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_list().entries(self.clone()).finish()
     }
 }
@@ -1219,14 +1219,14 @@ impl<'a, K, V: Debug> fmt::Debug for Values<'a, K, V> {
 ///
 /// [`drain`]: struct.HashMap.html#method.drain
 /// [`HashMap`]: struct.HashMap.html
-pub struct Drain<'a, K: 'a, V: 'a> {
+pub struct Drain<'a, K, V> {
     inner: RawDrain<'a, (K, V)>,
 }
 
-impl<'a, K, V> Drain<'a, K, V> {
+impl<K, V> Drain<'_, K, V> {
     /// Returns a iterator of references over the remaining items.
     #[inline]
-    pub(super) fn iter(&self) -> Iter<K, V> {
+    pub(super) fn iter(&self) -> Iter<'_, K, V> {
         Iter {
             inner: self.inner.iter(),
             _marker: PhantomData,
@@ -1241,7 +1241,7 @@ impl<'a, K, V> Drain<'a, K, V> {
 ///
 /// [`values_mut`]: struct.HashMap.html#method.values_mut
 /// [`HashMap`]: struct.HashMap.html
-pub struct ValuesMut<'a, K: 'a, V: 'a> {
+pub struct ValuesMut<'a, K, V> {
     inner: IterMut<'a, K, V>,
 }
 
@@ -1250,7 +1250,7 @@ pub struct ValuesMut<'a, K: 'a, V: 'a> {
 /// See the [`HashMap::raw_entry_mut`] docs for usage examples.
 ///
 /// [`HashMap::raw_entry_mut`]: struct.HashMap.html#method.raw_entry_mut
-pub struct RawEntryBuilderMut<'a, K: 'a, V: 'a, S: 'a> {
+pub struct RawEntryBuilderMut<'a, K, V, S> {
     map: &'a mut HashMap<K, V, S>,
 }
 
@@ -1274,7 +1274,7 @@ pub enum RawEntryMut<'a, K: 'a, V: 'a, S: 'a> {
 /// It is part of the [`RawEntryMut`] enum.
 ///
 /// [`RawEntryMut`]: enum.RawEntryMut.html
-pub struct RawOccupiedEntryMut<'a, K: 'a, V: 'a> {
+pub struct RawOccupiedEntryMut<'a, K, V> {
     elem: Bucket<(K, V)>,
     table: &'a mut RawTable<(K, V)>,
 }
@@ -1283,7 +1283,7 @@ pub struct RawOccupiedEntryMut<'a, K: 'a, V: 'a> {
 /// It is part of the [`RawEntryMut`] enum.
 ///
 /// [`RawEntryMut`]: enum.RawEntryMut.html
-pub struct RawVacantEntryMut<'a, K: 'a, V: 'a, S: 'a> {
+pub struct RawVacantEntryMut<'a, K, V, S> {
     table: &'a mut RawTable<(K, V)>,
     hash_builder: &'a S,
 }
@@ -1293,7 +1293,7 @@ pub struct RawVacantEntryMut<'a, K: 'a, V: 'a, S: 'a> {
 /// See the [`HashMap::raw_entry`] docs for usage examples.
 ///
 /// [`HashMap::raw_entry`]: struct.HashMap.html#method.raw_entry
-pub struct RawEntryBuilder<'a, K: 'a, V: 'a, S: 'a> {
+pub struct RawEntryBuilder<'a, K, V, S> {
     map: &'a HashMap<K, V, S>,
 }
 
@@ -1629,14 +1629,14 @@ impl<'a, K, V, S> RawVacantEntryMut<'a, K, V, S> {
     }
 }
 
-impl<'a, K, V, S> Debug for RawEntryBuilderMut<'a, K, V, S> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl<K, V, S> Debug for RawEntryBuilderMut<'_, K, V, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RawEntryBuilder").finish()
     }
 }
 
-impl<'a, K: Debug, V: Debug, S> Debug for RawEntryMut<'a, K, V, S> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl<K: Debug, V: Debug, S> Debug for RawEntryMut<'_, K, V, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             RawEntryMut::Vacant(ref v) => f.debug_tuple("RawEntry").field(v).finish(),
             RawEntryMut::Occupied(ref o) => f.debug_tuple("RawEntry").field(o).finish(),
@@ -1644,8 +1644,8 @@ impl<'a, K: Debug, V: Debug, S> Debug for RawEntryMut<'a, K, V, S> {
     }
 }
 
-impl<'a, K: Debug, V: Debug> Debug for RawOccupiedEntryMut<'a, K, V> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl<K: Debug, V: Debug> Debug for RawOccupiedEntryMut<'_, K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RawOccupiedEntryMut")
             .field("key", self.key())
             .field("value", self.get())
@@ -1653,14 +1653,14 @@ impl<'a, K: Debug, V: Debug> Debug for RawOccupiedEntryMut<'a, K, V> {
     }
 }
 
-impl<'a, K, V, S> Debug for RawVacantEntryMut<'a, K, V, S> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl<K, V, S> Debug for RawVacantEntryMut<'_, K, V, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RawVacantEntryMut").finish()
     }
 }
 
-impl<'a, K, V, S> Debug for RawEntryBuilder<'a, K, V, S> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl<K, V, S> Debug for RawEntryBuilder<'_, K, V, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RawEntryBuilder").finish()
     }
 }
@@ -1679,8 +1679,8 @@ pub enum Entry<'a, K: 'a, V: 'a, S: 'a> {
     Vacant(VacantEntry<'a, K, V, S>),
 }
 
-impl<'a, K: 'a + Debug, V: 'a + Debug, S: 'a> Debug for Entry<'a, K, V, S> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl<K: Debug, V: Debug, S> Debug for Entry<'_, K, V, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Vacant(ref v) => f.debug_tuple("Entry").field(v).finish(),
             Occupied(ref o) => f.debug_tuple("Entry").field(o).finish(),
@@ -1692,20 +1692,20 @@ impl<'a, K: 'a + Debug, V: 'a + Debug, S: 'a> Debug for Entry<'a, K, V, S> {
 /// It is part of the [`Entry`] enum.
 ///
 /// [`Entry`]: enum.Entry.html
-pub struct OccupiedEntry<'a, K: 'a, V: 'a, S: 'a> {
+pub struct OccupiedEntry<'a, K, V, S> {
     key: Option<K>,
     elem: Bucket<(K, V)>,
     table: &'a mut HashMap<K, V, S>,
 }
 
-unsafe impl<'a, K, V, S> Send for OccupiedEntry<'a, K, V, S>
+unsafe impl<K, V, S> Send for OccupiedEntry<'_, K, V, S>
 where
     K: Send,
     V: Send,
     S: Send,
 {
 }
-unsafe impl<'a, K, V, S> Sync for OccupiedEntry<'a, K, V, S>
+unsafe impl<K, V, S> Sync for OccupiedEntry<'_, K, V, S>
 where
     K: Sync,
     V: Sync,
@@ -1713,8 +1713,8 @@ where
 {
 }
 
-impl<'a, K: 'a + Debug, V: 'a + Debug, S> Debug for OccupiedEntry<'a, K, V, S> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl<K: Debug, V: Debug, S> Debug for OccupiedEntry<'_, K, V, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OccupiedEntry")
             .field("key", self.key())
             .field("value", self.get())
@@ -1726,14 +1726,14 @@ impl<'a, K: 'a + Debug, V: 'a + Debug, S> Debug for OccupiedEntry<'a, K, V, S> {
 /// It is part of the [`Entry`] enum.
 ///
 /// [`Entry`]: enum.Entry.html
-pub struct VacantEntry<'a, K: 'a, V: 'a, S: 'a> {
+pub struct VacantEntry<'a, K, V, S> {
     hash: u64,
     key: K,
     table: &'a mut HashMap<K, V, S>,
 }
 
-impl<'a, K: 'a + Debug, V: 'a, S> Debug for VacantEntry<'a, K, V, S> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl<K: Debug, V, S> Debug for VacantEntry<'_, K, V, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("VacantEntry").field(self.key()).finish()
     }
 }
@@ -1802,14 +1802,14 @@ impl<'a, K, V> Iterator for Iter<'a, K, V> {
         self.inner.size_hint()
     }
 }
-impl<'a, K, V> ExactSizeIterator for Iter<'a, K, V> {
+impl<K, V> ExactSizeIterator for Iter<'_, K, V> {
     #[inline]
     fn len(&self) -> usize {
         self.inner.len()
     }
 }
 
-impl<'a, K, V> FusedIterator for Iter<'a, K, V> {}
+impl<K, V> FusedIterator for Iter<'_, K, V> {}
 
 impl<'a, K, V> Iterator for IterMut<'a, K, V> {
     type Item = (&'a K, &'a mut V);
@@ -1826,20 +1826,20 @@ impl<'a, K, V> Iterator for IterMut<'a, K, V> {
         self.inner.size_hint()
     }
 }
-impl<'a, K, V> ExactSizeIterator for IterMut<'a, K, V> {
+impl<K, V> ExactSizeIterator for IterMut<'_, K, V> {
     #[inline]
     fn len(&self) -> usize {
         self.inner.len()
     }
 }
-impl<'a, K, V> FusedIterator for IterMut<'a, K, V> {}
+impl<K, V> FusedIterator for IterMut<'_, K, V> {}
 
-impl<'a, K, V> fmt::Debug for IterMut<'a, K, V>
+impl<K, V> fmt::Debug for IterMut<'_, K, V>
 where
     K: fmt::Debug,
     V: fmt::Debug,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_list().entries(self.iter()).finish()
     }
 }
@@ -1865,7 +1865,7 @@ impl<K, V> ExactSizeIterator for IntoIter<K, V> {
 impl<K, V> FusedIterator for IntoIter<K, V> {}
 
 impl<K: Debug, V: Debug> fmt::Debug for IntoIter<K, V> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_list().entries(self.iter()).finish()
     }
 }
@@ -1882,13 +1882,13 @@ impl<'a, K, V> Iterator for Keys<'a, K, V> {
         self.inner.size_hint()
     }
 }
-impl<'a, K, V> ExactSizeIterator for Keys<'a, K, V> {
+impl<K, V> ExactSizeIterator for Keys<'_, K, V> {
     #[inline]
     fn len(&self) -> usize {
         self.inner.len()
     }
 }
-impl<'a, K, V> FusedIterator for Keys<'a, K, V> {}
+impl<K, V> FusedIterator for Keys<'_, K, V> {}
 
 impl<'a, K, V> Iterator for Values<'a, K, V> {
     type Item = &'a V;
@@ -1902,13 +1902,13 @@ impl<'a, K, V> Iterator for Values<'a, K, V> {
         self.inner.size_hint()
     }
 }
-impl<'a, K, V> ExactSizeIterator for Values<'a, K, V> {
+impl<K, V> ExactSizeIterator for Values<'_, K, V> {
     #[inline]
     fn len(&self) -> usize {
         self.inner.len()
     }
 }
-impl<'a, K, V> FusedIterator for Values<'a, K, V> {}
+impl<K, V> FusedIterator for Values<'_, K, V> {}
 
 impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
     type Item = &'a mut V;
@@ -1922,20 +1922,20 @@ impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
         self.inner.size_hint()
     }
 }
-impl<'a, K, V> ExactSizeIterator for ValuesMut<'a, K, V> {
+impl<K, V> ExactSizeIterator for ValuesMut<'_, K, V> {
     #[inline]
     fn len(&self) -> usize {
         self.inner.len()
     }
 }
-impl<'a, K, V> FusedIterator for ValuesMut<'a, K, V> {}
+impl<K, V> FusedIterator for ValuesMut<'_, K, V> {}
 
-impl<'a, K, V> fmt::Debug for ValuesMut<'a, K, V>
+impl<K, V> fmt::Debug for ValuesMut<'_, K, V>
 where
     K: fmt::Debug,
     V: fmt::Debug,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_list().entries(self.inner.iter()).finish()
     }
 }
@@ -1952,20 +1952,20 @@ impl<'a, K, V> Iterator for Drain<'a, K, V> {
         self.inner.size_hint()
     }
 }
-impl<'a, K, V> ExactSizeIterator for Drain<'a, K, V> {
+impl<K, V> ExactSizeIterator for Drain<'_, K, V> {
     #[inline]
     fn len(&self) -> usize {
         self.inner.len()
     }
 }
-impl<'a, K, V> FusedIterator for Drain<'a, K, V> {}
+impl<K, V> FusedIterator for Drain<'_, K, V> {}
 
-impl<'a, K, V> fmt::Debug for Drain<'a, K, V>
+impl<K, V> fmt::Debug for Drain<'_, K, V>
 where
     K: fmt::Debug,
     V: fmt::Debug,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_list().entries(self.iter()).finish()
     }
 }
@@ -2338,7 +2338,7 @@ impl<'a, K, V, S> OccupiedEntry<'a, K, V, S> {
     }
 }
 
-impl<'a, K: 'a, V: 'a, S> VacantEntry<'a, K, V, S> {
+impl<'a, K, V, S> VacantEntry<'a, K, V, S> {
     /// Gets a reference to the key that would be used when inserting a value
     /// through the `VacantEntry`.
     ///
@@ -2500,12 +2500,12 @@ mod test_map {
     use super::DefaultHashBuilder;
     use super::Entry::{Occupied, Vacant};
     use super::HashMap;
+    #[cfg(not(miri))]
+    use crate::CollectionAllocErr::*;
     use rand::{rngs::SmallRng, Rng, SeedableRng};
     use std::cell::RefCell;
     use std::usize;
     use std::vec::Vec;
-    #[cfg(not(miri))]
-    use CollectionAllocErr::*;
 
     #[test]
     fn test_zero_capacities() {
@@ -2601,7 +2601,7 @@ mod test_map {
     }
 
     impl Clone for Droppable {
-        fn clone(&self) -> Droppable {
+        fn clone(&self) -> Self {
             Droppable::new(self.k)
         }
     }
